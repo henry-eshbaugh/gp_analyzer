@@ -13,9 +13,9 @@
 #define LOOP_ARGV for (int ARGV_COUNTER = 1; ARGV_COUNTER < argc; NEXT_ARG)
 #define IF_ARG(x) if (!strcasecmp(argv[ARGV_COUNTER], x))
 #define IF_NOT_ARG(x) if (strcasecmp(argv[ARGV_COUNTER], x))
-#define IF_ARG_EXISTS if (ARGV_COUNTER < argc)
-#define IF_ARG_NOT_EXISTS if (ARGV_COUNTER >= argc)
-#define CHECK_ARGV if (ARGV_COUNTER >= argc) usage(argv[0])
+#define IF_ARG_EXISTS if (!(ARGV_COUNTER < argc)) else
+#define IF_ARG_NOT_EXISTS if (!(ARGV_COUNTER >= argc)); else usage()
+#define CHECK_ARGV if (!(ARGV_COUNTER >= argc)); else usage()
 
 #define CHECK_OK(cond, ...) if (cond) { fprintf(stderr, __VA_ARGS__); usage(); }
 

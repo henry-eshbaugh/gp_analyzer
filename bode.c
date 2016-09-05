@@ -45,8 +45,8 @@ const double c_max_frequency = 62.5e6;  /* Maximal signal frequency [Hz] */
 const double c_min_frequency = 0; 	/* Minimal signal frequency [Hz] */
 const double c_max_amplitude = 1.0; 	/* Maximal signal amplitude [V]  */
 
-#define n (16*1024) // AWG buffer length [samples]
-int32_t data[n]; // AWG data buffer
+#define AWG_BUF_LEN (16*1024) // AWG buffer length [samples]
+int32_t data[AWG_BUF_LEN]; // AWG data buffer
 
 /** Signal types */
 typedef enum {
@@ -84,45 +84,47 @@ int bode_data_analysis(float **s, uint32_t size,
 					   float *Phase, double w_out, int f);
 
 /** Print usage information */
-/* TODO: this invocation *sucks* */
-void usage() {
+#define usage() _usage(__FILE__, __LINE__, __func__)
+void _usage(char *file, int line, const char *func) {
 	const char *format =
-			"Bode analyzer version %s, compiled at %s\n"
-			"(TODO: this usage is out of date)\n"
-			"Usage:\t%s [channel] "
-					   "[amplitude] "
-					   "[dc bias] "
-					   "[averaging] "
-					   "[count/steps] "
-					   "[start freq] "
-					   "[stop freq] "
-					   "[scale type]\n\n"
-			"\tchannel		Channel to generate signal on [1 / 2].\n"
-			"\tamplitude		Signal amplitude in V [0 - 1, which means max 2Vpp].\n"
-			"\tdc bias		DC bias/offset/component in V [0 - 1].\n"
-			"\t			Max sum of amplitude and DC bias is (0-1]V.\n"
-			"\taveraging		Number of samples per one measurement [>1].\n"
-			"\tcount/steps		Number of measurements [>2].\n"
-			"\tstart freq		Lower frequency limit in Hz [3 - 62.5e6].\n"
-			"\tstop freq		Upper frequency limit in Hz [3 - 62.5e6].\n"
-			"\tscale type		0 - linear, 1 - logarithmic.\n"
-			"\n"
-			"Output:\tfrequency [Hz], phase [deg], amplitude [dB]\n";
-
-	fprintf(stderr, format, VERSION_STR, __TIMESTAMP__, g_argv0);
+		"%s: Bode analyzer, build %s\n"
+		"Usage:\n"
+		"\t[c|ch|chan|channel]                  set output channel {1, 2}\n"
+		"\t[a|amp|ampl|amplitude]               set output amplitude [0-1]\n"
+		"\t[dc|bias|dc_bias|offset]             set output dc bias [0-1]\n"
+		"\t                                     Note: bias + amplitude < 1.\n"
+		"\t[r|range]                            set low and high freq bounds\n"
+		"\t                                     e.g. ./bode range 1e3 1e5\n"
+		"\t[startf|startfreq|fstart|f_lo|f_low] Set low freq bound\n"
+		"\t[stopf|stopfreq|fstop|f_hi|f_high]   Set high freq bound\n"
+		"\t[lin|linear]                         Linear freq sweep\n"
+		"\t[log|logarithmic]                    Logarithmic frequency sweep\n"
+		"\t[avg|avgn|average]                   Number of samples to average together at each point\n"
+		"\t[n|count|steps]                      Number of points to measure\n"
+		"\t[fin|config]                         Use a config file for a frequency:amplitude curve\n"
+		"\t[fout|out|csvout|csv]                Put the output CSV here\n"
+		"----------------------------------------------------------------\n"
+		"Example invocations:\n"
+		"\t%s config foo.conf n 50 log csv out.csv avg 3 range 1e2 1e5\n"
+		"\t%s count 30 lin csv foo.csv range 10 25e4 bias 0.2 a 0.3 chan 1\n"
+		"----------------------------------------------------------------\n"
+		"If you're seeing this output, it's likely something went wrong.\n"
+		"Here's where we were called: %s:(%d) from %s()\n";
+	fprintf(stderr, format, g_argv0, __TIMESTAMP__, g_argv0, g_argv0, file,
+		line, func);
 }
 
 /** Allocates a memory with size num_of_el, memory has 1 dimension */
-float *create_table_size(int num_of_el)
+float *create_table_size(int n)
 {
-	float *new_table = malloc(num_of_el * sizeof(float));
+	float *new_table = malloc(n * sizeof *new_table);
 	return new_table;
 }
 
 /** Allocates a memory with size num_of_cols*num_of_rows */
 float **create_2D_table_size(int num_of_rows, int num_of_cols)
 {
-	float **new_table = malloc(num_of_rows * sizeof(float*));
+	float **new_table = malloc(num_of_rows * sizeof *new_table);
 	for(int i = 0; i < num_of_rows; i++)
 		new_table[i] = create_table_size(num_of_cols);
 	return new_table;
@@ -303,7 +305,7 @@ int main(int argc, char *argv[])
 			if (!fout) printf("Warning: no file\n");
 		}
 
-		else usage(argv[0]);
+		else usage();
 
 	}
 
@@ -311,7 +313,7 @@ int main(int argc, char *argv[])
 	if (fin) map = parse_freq_ampl_map(fin);	
 	if (!fout) fout = stdout;
 
-	/* ensure that all options are valid */
+	/* basically these are runtime asserts */
 	CHECK_OK(ch > 1,                            "Invalid channel value.\n");
 	CHECK_OK(ampl < 0,                          "Invalid amplitude.\n");
 	CHECK_OK(ampl > c_max_amplitude,            "Amplitude too high\n");
@@ -330,18 +332,18 @@ int main(int argc, char *argv[])
 	/** Parameters initialization and calculation */
 	double          frequency_step;
 	double          a, b, c;
-	double		endfreq = 0;		// endfreq set for generate's sweep
+	double		endfreq = 0;		/* endfreq set for generate's sweep */
 	double		k;
-	double		w_out;  		// angular velocity
-	uint32_t        min_periods = 10; // max 20
-	uint32_t        size; // number of samples varies with number of periods
+	double		w_out;  		/* angular velocity */
+	uint32_t        min_periods = 10;       /* max 20 */
+	uint32_t        size; 			/* number of samples varies with number of periods */
 	signal_e        type = eSignalSine;
-	int             f = 0; // used in for lop, setting the decimation
-	int             i1, fr; // iterators in for loops
-	int             equal = 0; // parameter initialized for generator functionality
-	int             shaping = 0; // parameter initialized for generator functionality
+	int             f = 0; 			/* decimation index */
+	int             i1, fr; 		/* iterators in for loops */
+	int             equal = 0; 		/* parameter initialized for generator functionality */
+	int             shaping = 0; 		/* parameter initialized for generator functionality */
 	int             transientEffectFlag = 1;
-	int             stepsTE = 10; // number of steps for transient effect(TE) elimination
+	int             stepsTE = 10; 		/* number of steps for transient effect(TE) elimination */
 	int             TE_step_counter;
 	int             progress_int;
 	char            command[70];
@@ -355,11 +357,12 @@ int main(int argc, char *argv[])
 
 	TE_step_counter = stepsTE;
 
-	/// If logarythmic scale is selected start and end frequencies are defined to compliment logaritmic output
+	/* handle log scale */
 	if (scale_type)
 		b = log10f(end_frequency),
 		a = log10f(start_frequency),
 		c = (b - a) / (steps - 1);
+		/* ^ this is one expr, note the commas */
 	else
 		frequency_step = (end_frequency - start_frequency) / (steps - 1);
 
@@ -380,9 +383,9 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	/* Opening files FIXME get rid of this bullshit */
+	/* ----- generate/acquire loop ----- */
 	for (fr = 0; fr < steps; fr++) {
-		/* scale type dictates frequency used in for iterations */
+		/* set scale type */
 		if (scale_type) {
 			k = powf(10, (c * (float)fr) + a);
 			frequency[fr] = k;
@@ -390,8 +393,7 @@ int main(int argc, char *argv[])
 			frequency[fr] = start_frequency + (frequency_step * fr);
 		}
 
-		/* Outputting frequencies below the start freq will suppress *
-		 * transient effects on the measurement                      */
+		/* account for transient effects by outputting low freqs */
 		if (transientEffectFlag == 1){
 
 			if (TE_step_counter > 0) {
@@ -409,7 +411,8 @@ int main(int argc, char *argv[])
 
 		}
 
-		/* adjust progress bar for transient effects accounting */
+		/* progress bar has transient effect accounting      */
+		/* TODO: get ncurses on RP, have a real progress bar */
 		progress_int = transientEffectFlag == 1 ?
 				  stepsTE - TE_step_counter
 				: stepsTE + fr;
@@ -417,54 +420,49 @@ int main(int argc, char *argv[])
 		progress_int /= steps + stepsTE - 1;
 
 		if (progress_int <= 100) {
-			/* TODO: no more progress.txt */
-			/* no touchy scary things happen */
 			sprintf(hex, "%x", (int)(255 - (255*progress_int/100)));
 			strcpy(command, "/opt/redpitaya/bin/monitor 0x40000030 0x" );
 			strcat(command, hex);
 			system(command);
-			//printf("progress = %d\n", progress_int);
 		}
 
+		/* ----- signal synthesis ----- */
 		w_out = frequency[fr] * 2 * M_PI; // w = omega = angular freq
-
-	   	/**
-		 * At first the signal generator generates a signal before the
-		 * measuring proces begins. First results are inaccurate otherwise.
-		 */
 		awg_param_t params;
-		/// Prepare data buffer (calculate from input arguments)
-		/* this should give us the frequency-dependent amplitude we want */
-		if (fin) ampl = linterp(map, frequency[fr]);
+		/* if given a config file, use it to calculate amplitude */
+		if (fin)
+			ampl = linterp(map, frequency[fr]);
+		/* prepare the signal buffer */
 		synthesize_signal(ampl, frequency[fr], type, endfreq, data, &params);
-		/// Write the data to the FPGA and set FPGA AWG state machine
+		/* Write the data to the FPGA and set FPGA AWG state machine */
 		write_data_fpga(ch, data, &params);
+		/* sleep 1ms for synchronization*/
 		usleep(1000);
 
-
+		/* ----- signal acquisition ----- */
 		for (i1 = 0; i1 < averaging_num; i1++) {
-			/* decimation changes depending on frequency */
-			     if	(frequency[fr] >= 160000) { f=0; }
-			else if (frequency[fr] >= 20000)  { f=1; }
-			else if (frequency[fr] >= 2500)   { f=2; }
-			else if (frequency[fr] >= 160)    { f=3; }
-			else if (frequency[fr] >= 20)	  { f=4; }
-			else if (frequency[fr] >= 2.5)    { f=5; }
+			/* find appropriate decimation index */
+			     if	(frequency[fr] >= 160000) f = 0;
+			else if (frequency[fr] >= 20000)  f = 1;
+			else if (frequency[fr] >= 2500)   f = 2;
+			else if (frequency[fr] >= 160)    f = 3;
+			else if (frequency[fr] >= 20)	  f = 4;
+			else if (frequency[fr] >= 2.5)    f = 5;
 
-			/* setting decimtion */
+			/* set decimtion index */
 			if (f != DEC_MAX) {
 				t_params[TIME_RANGE_PARAM] = f;
 			} else {
-				fprintf(stderr, "Invalid decimation DEC\n");
+				fprintf(stderr, "Invalid decimation %d\n", f);
 				usage();
 				return -1;
 			}
 
-			/* calculating num of samples */
+			/* calculate number of samples */
 			size = round(  (min_periods*125e6)
 				     / (frequency[fr] * g_dec[f]));
 
-			/* set 'scope module parameters for signal acqusition */
+			/* set scope module parameters for signal acqusition */
 			t_params[EQUAL_FILT_PARAM] = equal;
 			t_params[SHAPE_FILT_PARAM] = shaping;
 			if(rp_set_params((float *)&t_params, PARAMS_NUM) < 0) {
@@ -472,13 +470,13 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 
-			/* showtime: acquire the signal */
+			/* acquire the signal */
 			if (acquire_data(s, size) < 0) {
 				printf("error acquiring data @ acquire_data\n");
 				return -1;
 			}
 
-			/* data manipulation - returns Z (complex impedance) */
+			/* analysis */
 			if (bode_data_analysis(s, size, DC_bias, Amplitude,
 					       Phase, w_out, f) < 0) {
 				printf("error in bode_data_analysis()\n");
@@ -488,7 +486,7 @@ int main(int argc, char *argv[])
 			/* Saving data */
 			data_for_averaging[i1][1] = *Amplitude;
 			data_for_averaging[i1][2] = *Phase;
-		} // avearging loop end
+		} /* averaging loop end */
 
 		/* Calculating and saving mean values */
 		measured_data_amplitude[1] = mean_array_column(data_for_averaging, averaging_num, 1);
@@ -498,17 +496,12 @@ int main(int argc, char *argv[])
 			Amplitude_output[fr] = measured_data_amplitude[1];
 			Phase_output[fr] = measured_data_phase[1];
 		}
-
-
-
-	} // end of frequency sweep loop
-
-	/* Setting amplitude to 0V - turning off the output. */
+	}
+	
+	/* ----- done generating/acquiring, turn off the output ----- */
 	awg_param_t params;
-	/* Prepare data buffer (calculate from input arguments) */
-	synthesize_signal( 0, 1000, type, endfreq, data, &params );
-	/* Write the data to the FPGA and set FPGA AWG state machine */
-	write_data_fpga( ch, data, &params );
+	synthesize_signal(0, 1000, type, endfreq, data, &params);
+	write_data_fpga(ch, data, &params);
 
 
 	fprintf(fout, "Freq,Phi,A");
@@ -517,10 +510,6 @@ int main(int argc, char *argv[])
 
 	return 1;
 }
-
-/* -------------------------------------------------------------------- *
- * from here on out, avoid fucking with this file. All this works.      *
- * -------------------------------------------------------------------- */
 
 /* A lot of this code touches the FPGA directly. That's okay. It doesn't
  * use the normal rp_*() family of functions. That's also okay. This works,
@@ -542,12 +531,9 @@ int main(int argc, char *argv[])
  * @param awg   Returned AWG parameters.
  *
  */
-void synthesize_signal(double ampl,
-		       double freq,
-		       signal_e type,
-		       double endfreq,
-		       int32_t *data,
-		       awg_param_t *awg)
+void synthesize_signal(double ampl, double freq,
+		       signal_e type, double endfreq,
+		       int32_t *data, awg_param_t *awg)
 {
 
 	uint32_t i;
@@ -560,8 +546,8 @@ void synthesize_signal(double ampl,
 
 	/* This is where frequency is used... */
 	awg->offsgain = (dcoffs << 16) + 0x1fff;
-	awg->step = round(65536 * freq/c_awg_smpl_freq * n);
-	awg->wrap = round(65536 * n - 1);
+	awg->step = round(65536 * freq/c_awg_smpl_freq * AWG_BUF_LEN);
+	awg->wrap = round(65536 * AWG_BUF_LEN - 1);
 
 	int trans = freq / 1e6 * trans1; /* 300 samples at 1 MHz */
 	uint32_t amp = ampl * 4000.0;	/* 1 V ==> 4000 DAC counts */
@@ -576,16 +562,16 @@ void synthesize_signal(double ampl,
 
 
 	/* Fill data[] with appropriate buffer samples */
-	for(i = 0; i < n; i++) {
+	for(i = 0; i < AWG_BUF_LEN; i++) {
 
 		/* Sine */
 		if (type == eSignalSine) {
-			data[i] = round(amp * cos(2*M_PI*(double)i/(double)n));
+			data[i] = round(amp * cos(2*M_PI*(double)i/(double)AWG_BUF_LEN));
 		}
 
 		/* Square */
 		if (type == eSignalSquare) {
-			data[i] = round(amp * cos(2*M_PI*(double)i/(double)n));
+			data[i] = round(amp * cos(2*M_PI*(double)i/(double)AWG_BUF_LEN));
 			if (data[i] > 0)
 				data[i] = amp;
 			else
@@ -596,7 +582,7 @@ void synthesize_signal(double ampl,
 			double x1, x2, y1, y2;
 
 			xx = i;
-			xm = n;
+			xm = AWG_BUF_LEN;
 			mm = -2.0*(double)amp/(double)trans;
 			qq = (double)amp * (2 + xm/(2.0*(double)trans));
 
@@ -631,7 +617,7 @@ void synthesize_signal(double ampl,
 
 		/* Triangle */
 		if (type == eSignalTriangle) {
-			data[i] = round(-1.0*(double)amp*(acos(cos(2*M_PI*(double)i/(double)n))/M_PI*2-1));
+			data[i] = round(-1.0*(double)amp*(acos(cos(2*M_PI*(double)i/(double)AWG_BUF_LEN))/M_PI*2-1));
 		}
 
 		/* Sweep */
@@ -642,7 +628,7 @@ void synthesize_signal(double ampl,
 		if (type == eSignalSweep) {
 			double sampFreq = c_awg_smpl_freq; // 125 MHz
 			double t = i / sampFreq; // This particular sample
-			double T = n / sampFreq; // Wave period = # samples / sample frequency
+			double T = AWG_BUF_LEN / sampFreq; // Wave period = # samples / sample frequency
 			/* Actual formula. Frequency changes from start to end. */
 			data[i] = round(amp * (sin((start*T)/log(end/start) * ((exp(t*log(end/start)/T)-1)))));
 		}
@@ -679,7 +665,7 @@ void write_data_fpga(uint32_t ch,
 		g_awg_reg->cha_count_step	 = awg->step;
 		g_awg_reg->cha_start_off	  = 0;
 
-		for(i = 0; i < n; i++) {
+		for(i = 0; i < AWG_BUF_LEN; i++) {
 			g_awg_cha_mem[i] = data[i];
 		}
 	} else {
@@ -690,7 +676,7 @@ void write_data_fpga(uint32_t ch,
 		g_awg_reg->chb_count_step	 = awg->step;
 		g_awg_reg->chb_start_off	  = 0;
 
-		for(i = 0; i < n; i++) {
+		for(i = 0; i < AWG_BUF_LEN; i++) {
 			g_awg_chb_mem[i] = data[i];
 		}
 	}
