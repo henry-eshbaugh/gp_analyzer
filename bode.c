@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <sys/param.h>
+#include <progressbar.h>
 
 #include "argparse.h"
 #include "linterp.h"
@@ -336,8 +337,11 @@ int main(int argc, char *argv[])
 	int             stepsTE = 10; 		/* number of steps for transient effect(TE) elimination */
 	int             TE_step_counter;
 	int             progress_int;
+	progressbar	*bar = progressbar_new_with_format("Performing frequency sweep...", 100, "[=]");
 	char            command[70];
 	char            hex[45];
+	char		label[32];
+	double		last_freq = -1.0, last_phi, last_gain;
 
 	/* if user sets less than 10 steps than stepsTE is decreased	      *
 	 * for transient efect to be eliminated only 10 steps of measurements *
@@ -401,13 +405,38 @@ int main(int argc, char *argv[])
 
 		}
 
-		/* progress bar has transient effect accounting      */
-		/* TODO: get ncurses on RP, have a real progress bar */
 		progress_int = transientEffectFlag == 1 ?
 				  stepsTE - TE_step_counter
 				: stepsTE + fr;
 		progress_int *= 100;
 		progress_int /= steps + stepsTE - 1;
+	
+		char c;
+		double freq_to_print;
+
+		if (frequency[fr] > 1e6)
+			c = 'M',
+			freq_to_print = frequency[fr] / 1e6;
+		else if (frequency[fr] > 1e3)
+			c = 'k',
+			freq_to_print = frequency[fr] / 1e3;
+		else	c = ' ',
+			freq_to_print = frequency[fr];
+
+
+		if (last_freq > 0) {
+			fprintf(stderr, "\r");
+			char buf[81];
+			for (int i = 0; i < 80; i++) buf[i] = ' ';
+			fprintf(stderr, "%s", buf);
+			fprintf(stderr, "\r");
+			fprintf(stderr, "Freq: %lf\t\tGain: %lf\t\tPhase: %lf"
+				"                                      \n",
+				last_freq, last_gain, last_phi);
+		}
+		sprintf(label, "%3.3lf %cHz", freq_to_print, c);
+		progressbar_update_label(bar, label);
+		progressbar_update(bar, progress_int);
 
 		if (progress_int <= 100) {
 			sprintf(hex, "%x", (int)(255 - (255*progress_int/100)));
@@ -443,7 +472,7 @@ int main(int argc, char *argv[])
 			if (f != DEC_MAX) {
 				t_params[TIME_RANGE_PARAM] = f;
 			} else {
-				fprintf(stderr, "Invalid decimation %d\n", f);
+				fprintf(stderr, "\rInvalid decimation %d                                     \n", f);
 				usage();
 				return -1;
 			}
@@ -456,20 +485,20 @@ int main(int argc, char *argv[])
 			t_params[EQUAL_FILT_PARAM] = equal;
 			t_params[SHAPE_FILT_PARAM] = shaping;
 			if(rp_set_params((float *)&t_params, PARAMS_NUM) < 0) {
-				fprintf(stderr, "rp_set_params() failed!\n");
+				fprintf(stderr, "\rrp_set_params() failed!                                       \n");
 				return -1;
 			}
 
 			/* acquire the signal */
 			if (acquire_data(s, size) < 0) {
-				printf("error acquiring data @ acquire_data\n");
+				printf("\rerror acquiring data @ acquire_data                                    \n");
 				return -1;
 			}
 
 			/* analysis */
 			if (bode_data_analysis(s, size, DC_bias, Amplitude,
 					       Phase, w_out, f) < 0) {
-				printf("error in bode_data_analysis()\n");
+				printf("\rerror in bode_data_analysis()                                          \n");
 				return -1;
 			}
 
@@ -486,6 +515,10 @@ int main(int argc, char *argv[])
 			Amplitude_output[fr] = measured_data_amplitude[1];
 			Phase_output[fr] = measured_data_phase[1];
 		}
+
+		last_freq = frequency[fr];
+		last_gain = Amplitude_output[fr];
+		last_phi  = Phase_output[fr];
 	}
 	
 	/* ----- done generating/acquiring, turn off the output ----- */
@@ -494,9 +527,11 @@ int main(int argc, char *argv[])
 	write_data_fpga(ch, data, &params);
 
 
-	fprintf(fout, "Freq,Phi,A");
+	fprintf(fout, "Freq,Phi,A\n");
 	for (int po = 0; po < steps; po++)
 		fprintf(fout, "%.2f,%.5f,%.5f\n", frequency[po], Phase_output[po], Amplitude_output[po]);
+	
+	progressbar_finish(bar);
 
 	return 1;
 }
