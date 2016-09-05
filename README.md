@@ -35,5 +35,6 @@ A complete list of options:
 	[fout|out|csvout|csv]                      put the output CSV here
 
 Example invocations:
-./bode config foo.conf n 50 log csv out.csv avg 3 range 1e2 1e5
-./bode count 30 lin csv foo.csv range 10 25e4 bias 0.2 a 0.3 chan 1
+
+	./bode config foo.conf n 50 log csv out.csv avg 3 range 1e2 1e5
+	./bode count 30 lin csv foo.csv range 10 25e4 bias 0.2 a 0.3 chan 1
