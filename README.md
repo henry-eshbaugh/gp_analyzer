@@ -16,6 +16,7 @@ Most delimiters are accepted. Amplitudes are calculated by linear
 interpolation between these frequency-amplitude pairs.
 
 A complete list of options:
+
 	[c|ch|chan|channel]		           set output channel {1, 2}
 	[a|amp|ampl|amplitude]			   set output amplitude [0-1]
 	[dc|bias|dc_bias|offset]	           set output dc bias [0-1]
