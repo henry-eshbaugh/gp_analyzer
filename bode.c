@@ -9,17 +9,7 @@
  * @Author4 Peter Miklavcic (manpage and code review)
  * Contact: <cim.martin@gmail.com>, <luka.golinar@gmail.com>
  *
- * GENERAL DESCRIPTION:
- *
- * The code below defines the Bode analyzer on a Red Pitaya.
- * It uses acquire and generate from the Test/ folder.
- * Data analysis returns frequency, phase and amplitude.
- *
- * VERSION: VERSION defined in Makefile
- *
- * This part of code is written in C programming language.
- * Please visit http://en.wikipedia.org/wiki/C_(programming_language)
- * for more details on the language used herein.
+ * with tweaks from Henry Eshbaugh <he915@ic.ac.uk>
  */
 
 #include <stdio.h>
